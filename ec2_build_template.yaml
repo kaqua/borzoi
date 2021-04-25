@@ -1,0 +1,145 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: EC2 build Template
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: "Common Configuration"
+      Parameters:
+        - Service
+        - Environment
+        - MyIp
+    - Label:
+        default: "VPC Configuration"
+      Parameters:
+        - VpcCidr
+        - SubnetCidr
+        - SubnetAvailabilityZone
+    - Label:
+        default: "EC2 Configuration"
+      Parameters:
+        - AmiId
+        - KeyName
+        - InstanceType
+Parameters:
+  Service:
+    Type: String
+    Description: 'Enter Service(Product) Name'
+  Environment:
+    Type: String
+    AllowedValues:
+      - stg
+      - prod
+  VpcCidr:
+    Type: String
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/\d{1,2}'
+    Description: 'Enter VPC CIDR. [ex]: xxx.xxx.xxx.xxx/xx'
+  SubnetCidr:
+    Type: String
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/\d{1,2}'
+    Description: 'Enter Subnet CIDR. [ex]: xxx.xxx.xxx.xxx/xx'
+  SubnetAvailabilityZone:
+    Type: AWS::EC2::AvailabilityZone::Name
+    Description: 'AZ to create a subnet.'
+  MyIp:
+    Type: String
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/\d{1,2}'
+    Description: 'Enter MyIP. [ex]: xxx.xxx.xxx.xxx/xx'
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
+    Description: 'Enter the Latest AMI to use.'
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: 'Enter the KeyPair to use.'
+  InstanceType:
+    Type: String
+    AllowedValues:
+      - t3.micro
+      - t3.nano
+      - t3.small
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}'
+  Subnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Ref SubnetAvailabilityZone
+      CidrBlock: !Ref SubnetCidr
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-Public'
+      VpcId: !Ref Vpc
+  Igw:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}'
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref Igw
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}'
+  Route:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref Igw
+  routeTableAssocName:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref Subnet
+      RouteTableId: !Ref RouteTable
+  Ec2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${AWS::StackName}-EC2'
+      GroupDescription: 'Attache EC2 Instance'
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref MyIp
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref MyIp
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-EC2'
+  WebEc2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      KeyName: !Ref KeyName
+      DisableApiTermination: false
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      Monitoring: false
+      SecurityGroupIds:
+        - !Ref Ec2SecurityGroup
+      SubnetId: !Ref Subnet
+      UserData: !Base64 |
+        #!/bin/bash -ex
+        yum install -y httpd
+        systemctl enable httpd
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}'
